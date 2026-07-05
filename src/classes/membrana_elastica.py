@@ -210,7 +210,7 @@ def ex_02():
 
 def ex_04():
     R = 0.4e-2
-    N = 101
+    N = 201
     membrana = MembranaElastica(N, R)
 
     x_hat = np.linspace(0, 2, N)
@@ -218,9 +218,6 @@ def ex_04():
 
     X, Y = np.meshgrid(x_hat, y_hat)
     Z_matrix = (X - 0.5)**2 + (Y - 0.5)**2
-
-    dist_sq = (X - 1.0)**2 + (Y - 1.0)**2
-    Z_matrix[dist_sq > 1.0] = 0.0
 
     Z = Z_matrix.flatten()
 
@@ -283,9 +280,9 @@ def ex_05():
     plt.show()
 
 def main():
-    ex_02()
+    # ex_02()
     ex_04()
-    ex_05()
+    # ex_05()
 
 if __name__ == "__main__":
     main()
