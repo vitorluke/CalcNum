@@ -135,12 +135,12 @@ class MembranaElastica:
         X, Y = np.meshgrid(x, y)
         Z = solution.reshape(N, N)
         
-        fig, ax = plt.subplots(figsize=(8,4))
+        fig, ax = plt.subplots(figsize=(5,5))
         
         ax.set_aspect('equal')
 
         if n is not None:
-            ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', title=f'Modo {n} (f={f:.2f}Hz)')
+            ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', title=f'Modo {n} (f={f:.3f}Hz)')
         else:
             ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', title=f'f={f:.3f}Hz')
         
@@ -148,9 +148,12 @@ class MembranaElastica:
         im2 = ax.contour(X, Y, Z, 20, linewidths=0.25, colors='k')
         
         cbar = fig.colorbar(im, ax=ax, orientation='horizontal')
-        cbar.set_label("$w$")
-            
-        plt.show()
+        cbar.set_label("$\\hat w$")
+        
+        if n is not None:
+            plt.savefig(f"imagens/membrana elástica/Exercício 2/Modo {n}.png")
+        else:
+            plt.show()
 
     def _plot_surface(self, mode, f, n):
         N = self.N
@@ -162,14 +165,17 @@ class MembranaElastica:
         X, Y = np.meshgrid(x, y)
         Z = mode.reshape(N, N)
         
-        fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, figsize=(8,6))
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, figsize=(5,5))
         surf = ax.plot_surface(X, Y, Z, cmap='jet')
-        ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', zlabel='$w$', title=f'Modo {n} (f={f:.3f}Hz)')
+        ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', zlabel='$\\hat w$', title=f'Modo {n} (f={f:.3f}Hz)')
         
-        cbar = fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
-        cbar.set_label("$w$")
-        
-        plt.show()
+        cbar = fig.colorbar(surf, ax=ax, shrink=0.5)
+        cbar.set_label("$\\hat w$")
+
+        if n is not None:
+            plt.savefig(f"imagens/membrana elástica/Exercício 2/Modo {n}.png")
+        else:
+            plt.show()
 
 def ex_02():
     R = 0.4e-2
@@ -193,7 +199,7 @@ def ex_02():
         print(f"| ({N},{N})".ljust(13), end="|")
 
         for f in freqs:
-            print(f" {f:.2f}".ljust(10), end="|")
+            print(f" {f:.4f}".ljust(10), end="|")
 
         print()
 
@@ -277,9 +283,9 @@ def ex_05():
     plt.show()
 
 def main():
-    # ex_02()
+    ex_02()
     ex_04()
-    # ex_05()
+    ex_05()
 
 if __name__ == "__main__":
     main()

@@ -23,10 +23,10 @@ class GemeoDigital:
     def __init__(self, levels_rede=3):
         """Inicializa o Gêmeo Digital instanciando as três físicas principais."""
         print("[GD] Inicializando os subsistemas físicos...")
-        self.H_k = 1e-3
+        self.H_k = 1047.0375e-6
 
         self.rede = RedeHidraulica(levels=levels_rede, H_k=self.H_k)
-        self.placa = PlacaTermica(Lx=0.03, Ly=0.015, Nx=241, Ny=121, k=0.25, R=0.0025, fonte_calor=5e5)
+        self.placa = PlacaTermica(Lx=0.03, Ly=0.015, Nx=101, Ny=51, k=0.25, R=0.0025, fonte_calor=5e5)
         self.membrana = MembranaElastica(N=51, R=0.0025)
         
         self.acop_hidrotermico  =  HidraulicoTermico(self.rede, self.placa)
@@ -209,11 +209,13 @@ class GemeoDigital:
         trapz_func = getattr(np, 'trapezoid', getattr(np, 'trapz', None))
         energia_total = float(trapz_func(hist['power'], dx=dt))
 
+        print(energia_total)
+
         return hist, (w, v, p, None, energia_total)
     
     def ex_1_2(self, p_O=0.50, f_obs=10.0):
         N_amostras = 2000
-        Prob = {0.05: [], 0.1: []}
+        Prob = {0.001: [], 0.025: [], 0.05: [], 0.1: []}
 
         for dt in Prob:
             print(f"[dt={dt}]")
@@ -858,7 +860,7 @@ if __name__ == "__main__":
     # gd.ex_1_1()
     # gd.ex_1_2()
     # gd.ex_2()
-    gd.ex_3_1()
+    # gd.ex_3_1()
     # gd.ex_3_2()
 
     hist, _ = gd.solver_transiente(0.01, 4.0)
