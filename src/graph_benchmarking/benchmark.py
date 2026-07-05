@@ -34,7 +34,7 @@ def exercicio_4(omega=3, n_passos=1000, tempo_final=10):
     
     for q in q0_t:
         pressao_t = q * pressao_base_0
-        pressoes_maximas.append(np.max(np.abs(pressao_t)))
+        pressoes_maximas.append(np.max(pressao_t))
     
     plot_pressao_maxima(tempo, pressoes_maximas, "Ex 4: Pressão Máxima na Rede ao Longo do Tempo", "imagens/rede hidraulica/ex4.png")
     return tempo, pressoes_maximas
@@ -56,7 +56,7 @@ def exercicio_5(omega=4, n_passos=1000, tempo_final=10):
     
     for q0, q175 in zip(q0_t, q175_t):
         pressao_t = (q0 * pressao_base_0) + (q175 * pressao_base_175)
-        pressoes_maximas.append(np.max(np.abs(pressao_t)))
+        pressoes_maximas.append(np.max(pressao_t))
         
     plot_pressao_maxima(tempo, pressoes_maximas, "Ex 5: Pressão Máxima com Múltiplas Injeções", "imagens/rede hidraulica/ex5.png")
     return tempo, pressoes_maximas
