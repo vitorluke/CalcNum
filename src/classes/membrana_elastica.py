@@ -1,6 +1,7 @@
 import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 
 big_number = 1e6
 
@@ -78,9 +79,9 @@ class MembranaElastica:
         assert(not(self.K is None or self.M is None))
 
         if nmodes is not None:
-            Lam, modes = sp.sparse.linalg.eigsh(self.K, k=nmodes, M=self.M, which='SM', tol=1e-9)
+            Lam, modes = sp.sparse.linalg.eigsh(self.K, k=nmodes, which='SM', tol=1e-9)
         else:
-            Lam, modes = sp.linalg.eigh(self.K.todense(), self.M.todense())
+            Lam, modes = sp.linalg.eigh(self.K.todense())
 
         idx = np.argsort(Lam)
         Lam = np.real(Lam[idx])
@@ -135,25 +136,28 @@ class MembranaElastica:
         X, Y = np.meshgrid(x, y)
         Z = solution.reshape(N, N)
         
-        fig, ax = plt.subplots(figsize=(5,5))
+        fig, ax = plt.subplots(figsize=(6,5))
         
         ax.set_aspect('equal')
 
         if n is not None:
             ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', title=f'Modo {n} (f={f:.3f}Hz)')
         else:
-            ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', title=f'f={f:.3f}Hz')
+            ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', title=f'f={f:.3e}')
         
         im = ax.contourf(X, Y, Z, 20, cmap='jet')
         im2 = ax.contour(X, Y, Z, 20, linewidths=0.25, colors='k')
         
-        cbar = fig.colorbar(im, ax=ax, orientation='horizontal')
+        cbar = fig.colorbar(im, ax=ax, orientation='horizontal', format='%.1e')
+        cbar.locator = ticker.MaxNLocator(nbins=5)  
         cbar.set_label("$\\hat w$")
         
         if n is not None:
             plt.savefig(f"imagens/membrana elástica/Exercício 2/Modo {n}.png")
         else:
-            plt.show()
+            plt.savefig(f"imagens/membrana elástica/4.png")
+        
+        plt.show()
 
     def _plot_surface(self, mode, f, n):
         N = self.N
@@ -165,9 +169,9 @@ class MembranaElastica:
         X, Y = np.meshgrid(x, y)
         Z = mode.reshape(N, N)
         
-        fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, figsize=(5,5))
+        fig, ax = plt.subplots(subplot_kw={"projection": "3d"}, figsize=(6,5))
         surf = ax.plot_surface(X, Y, Z, cmap='jet')
-        ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', zlabel='$\\hat w$', title=f'Modo {n} (f={f:.3f}Hz)')
+        ax.set(xlabel='$x$ (m)', ylabel='$y$ (m)', zlabel='$\\hat w$', title=f'Modo {n} (f={f:.3e})')
         
         cbar = fig.colorbar(surf, ax=ax, shrink=0.5)
         cbar.set_label("$\\hat w$")
@@ -175,11 +179,13 @@ class MembranaElastica:
         if n is not None:
             plt.savefig(f"imagens/membrana elástica/Exercício 2/Modo {n}.png")
         else:
-            plt.show()
+            plt.savefig(f"imagens/membrana elástica/*.png")
+        
+        plt.show()
 
 def ex_02():
     R = 0.4e-2
-    grids = range(21, 102, 20)
+    grids = range(21, 202, 20)
 
     print("Tabela das frequências fundamentais da membrana (Hz)")
 
@@ -210,7 +216,7 @@ def ex_02():
 
 def ex_04():
     R = 0.4e-2
-    N = 201
+    N = 51
     membrana = MembranaElastica(N, R)
 
     x_hat = np.linspace(0, 2, N)
@@ -218,10 +224,12 @@ def ex_04():
 
     X, Y = np.meshgrid(x_hat, y_hat)
     Z_matrix = (X - 0.5)**2 + (Y - 0.5)**2
+    
+    Z_matrix[(X-1.0)**2+(Y-1.0)**2>1.0]=0.0
 
     Z = Z_matrix.flatten()
 
-    _, omegas_hat, modes = membrana.solve_modes_adimensional(5000)
+    _, omegas_hat, modes = membrana.solve_modes_adimensional(2500)
     alphas = modes.T @ Z
 
     omega_star_hat = 100
