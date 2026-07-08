@@ -13,7 +13,7 @@ class MembranaElastica:
         self.R = R
         
         self.h = 2 * R / (N - 1)
-        self.h_sq = self.h * self.h
+        self.h2 = 4 * R * R / ((N - 1)*(N - 1))
         
         self.e = 0.1e-3
         self.sigma = 200
@@ -31,13 +31,14 @@ class MembranaElastica:
         N = self.N
         nunk = self.nunk
 
-        h_sq_hat = 4.0 / ((N-1)*(N-1))
+        h_hat = 2 / (N - 1)
+        h2_hat = 4 / ((N-1)*(N-1))
 
         d1 = 4.0*np.ones(nunk)
         d2 = -np.ones(nunk-1)
         d3 = -np.ones(nunk-N)
         
-        K = 1.0 / h_sq_hat * sp.sparse.diags([d3, d2, d1, d2, d3], [-N, -1, 0, 1, N], format='csr')
+        K = 1.0 / h2_hat * sp.sparse.diags([d3, d2, d1, d2, d3], [-N, -1, 0, 1, N], format='csr')
         
         Iden = big_number * sp.sparse.identity(nunk, format='csr')
         
@@ -55,8 +56,6 @@ class MembranaElastica:
             Ic = self.ij2n(k,N-1)
             K[Ic,:], K[:,Ic] = Iden[Ic,:], Iden[:,Ic]
         
-        h_hat = 2 / (N - 1)
-
         for i in range(0, N):
             for j in range(0, N):
                 x = i * h_hat - 1.0
@@ -78,10 +77,18 @@ class MembranaElastica:
     def solve_modes_adimensional(self, nmodes=None):
         assert(not(self.K is None or self.M is None))
 
+        tol = 1e-9
+
         if nmodes is not None:
-            Lam, modes = sp.sparse.linalg.eigsh(self.K, k=nmodes, which='SM', tol=1e-9)
+            Lam, modes = sp.sparse.linalg.eigsh(self.K, M=self.M, k=nmodes, which='SM', tol=tol)
         else:
             Lam, modes = sp.linalg.eigh(self.K.todense())
+
+        tol = tol
+        mask = np.abs(Lam - big_number) > tol
+
+        Lam = Lam[mask]
+        modes = modes[:, mask]
 
         idx = np.argsort(Lam)
         Lam = np.real(Lam[idx])
@@ -99,7 +106,6 @@ class MembranaElastica:
         sigma = self.sigma
         rho = self.rho
         e = self.e
-        h_sq = self.h_sq
 
         scale = np.sqrt(sigma/(rho * e * R * R))
 
@@ -229,7 +235,7 @@ def ex_04():
 
     Z = Z_matrix.flatten()
 
-    _, omegas_hat, modes = membrana.solve_modes_adimensional(2500)
+    _, omegas_hat, modes = membrana.solve_modes_adimensional(250)
     alphas = modes.T @ Z
 
     omega_star_hat = 100
@@ -288,9 +294,9 @@ def ex_05():
     plt.show()
 
 def main():
-    # ex_02()
+    ex_02()
     ex_04()
-    # ex_05()
+    ex_05()
 
 if __name__ == "__main__":
     main()

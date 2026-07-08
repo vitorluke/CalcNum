@@ -7,7 +7,7 @@ from src.classes.membrana_elastica import MembranaElastica
 from src.classes.rede_hidraulica import RedeHidraulica
 
 class HidraulicoMecanico:
-    def __init__(self, rede, membrana, H_k=1000e-6, beta_hat=0.1):
+    def __init__(self, rede:RedeHidraulica, membrana:MembranaElastica, H_k=1000e-6, beta_hat=0.1):
         """
         Inicializa o modelo acoplado Hidráulico-Mecânico.
         """
@@ -49,7 +49,7 @@ class HidraulicoMecanico:
         """
         # Inicialização das Componentes Isoladas
         membrana = MembranaElastica(N=N_mem, R=0.25e-2)
-        rede = RedeHidraulica(levels=n_levels)
+        rede = RedeHidraulica(levels=n_levels, H_k=H_k)
         
         return cls(rede, membrana, H_k, beta_hat)
 
@@ -60,17 +60,17 @@ class HidraulicoMecanico:
         # 1. Recalcular Condutâncias da Rede para seção quadrada e H_k especificado
         kappa_k = (np.pi * (self.H_k**4)) / (128 * self.mu)
         condutancias = []
-        for (i, j) in self.rede.conectividade:
-            n1 = self.rede.posicoes_nos[i]
-            n2 = self.rede.posicoes_nos[j]
+        for (i, j) in self.rede.conec:
+            n1 = self.rede.xnos[i]
+            n2 = self.rede.xnos[j]
             L_k = np.sqrt((n1[0] - n2[0])**2 + (n1[1] - n2[1])**2)
             condutancias.append(kappa_k / L_k)
         
-        self.rede.condutancias = np.array(condutancias)
+        self.rede.cond = np.array(condutancias)
         self.rede.assembly()
         
         # A dimensional (usada puramente para cálculo de potência mecânica)
-        self.A_dim_pura = self.rede.matriz_global.copy()
+        self.A_dim_pura = self.rede.A.copy()
         
         # Adimensionalização da Matriz A
         A_scale = self.pref / (self.vref * (self.R_dim**2))
@@ -193,7 +193,7 @@ class HidraulicoMecanico:
     def executar_ex_01(cls):
         print("=== Exercício 1: Estrutura da Matriz R ===")
         # Malha reduzida solicitada
-        sistema = cls(N_mem=26)
+        sistema = HidraulicoMecanico.instantiate_subsystems(N_mem=26)
         
         A_inv = np.linalg.inv(sistema.A_adim.toarray())
         U_denso = sistema.U.toarray()
@@ -211,7 +211,7 @@ class HidraulicoMecanico:
     @classmethod
     def executar_ex_02(cls):
         print("=== Exercício 2: Enchimento/Pressurização ===")
-        sistema = cls(N_mem=51, H_k=1000e-6, beta_hat=0.1)
+        sistema = HidraulicoMecanico.instantiate_subsystems(N_mem=51, H_k=1000e-6, beta_hat=0.1)
         
         # Pressão Degrau de 10kPa
         def p_in(t): return 10000.0
@@ -230,7 +230,7 @@ class HidraulicoMecanico:
 
         for dt in dt_list:
 
-            sistema = cls(
+            sistema = HidraulicoMecanico.instantiate_subsystems(
                 N_mem=51,
                 H_k=1000e-6,
                 beta_hat=0.1
@@ -258,7 +258,7 @@ class HidraulicoMecanico:
 
         for N in [25,51, 101,201]:
 
-            sistema = cls(
+            sistema = HidraulicoMecanico.instantiate_subsystems(
                 N_mem=N,
                 H_k=1000e-6,
                 beta_hat=0.1
@@ -286,7 +286,7 @@ class HidraulicoMecanico:
 
         for Pin in [5000.0, 10000.0, 20000.0]:
 
-            sistema = cls(
+            sistema = HidraulicoMecanico.instantiate_subsystems(
                 N_mem=51,
                 beta_hat=0.1
             )
@@ -313,7 +313,7 @@ class HidraulicoMecanico:
 
         for H in [500e-6, 1000e-6, 2000e-6]:
 
-            sistema = cls(
+            sistema = HidraulicoMecanico.instantiate_subsystems(
                 N_mem=51,
                 H_k=H,
                 beta_hat=0.1
@@ -337,7 +337,7 @@ class HidraulicoMecanico:
     @classmethod
     def executar_ex_03(cls, estado_inicial_ex2):
         print("=== Exercício 3: Relaxação Instântanea ===")
-        sistema = cls(N_mem=51, H_k=1000e-6, beta_hat=0.1)
+        sistema = HidraulicoMecanico.instantiate_subsystems(N_mem=51, H_k=1000e-6, beta_hat=0.1)
         
         # Pressão Cai para Zero
         def p_in(t): return 0.0
@@ -350,7 +350,7 @@ class HidraulicoMecanico:
         index_modo = modo-1
         print(f"=== Exercício 4: Oscilação Livre do {modo}º Modo ===")
         # Sem amortecimento intrínseco e canais largos
-        sistema = cls(N_mem=51, H_k=2000e-6, beta_hat=0.0)
+        sistema = HidraulicoMecanico.instantiate_subsystems(N_mem=51, H_k=2000e-6, beta_hat=0.0)
         
         # Obter o 3º Modo
         freqs, omegas, modos = sistema.membrana.solve_modes_adimensional(nmodes=10)
@@ -396,7 +396,7 @@ class HidraulicoMecanico:
     @classmethod
     def executar_ex_05(cls, w3_hat):
         print("=== Exercício 5: Ressonância Harmônica ===")
-        sistema = cls(N_mem=51, H_k=2000e-6, beta_hat=0.0)
+        sistema = HidraulicoMecanico.instantiate_subsystems(N_mem=51, H_k=2000e-6, beta_hat=0.0)
         
         # Excitação Harmônica na Frequência Natural
         def p_in(t): return 5000.0 * np.cos(w3_hat * t)

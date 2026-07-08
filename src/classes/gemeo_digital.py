@@ -23,10 +23,10 @@ class GemeoDigital:
     def __init__(self, levels_rede=3):
         """Inicializa o Gêmeo Digital instanciando as três físicas principais."""
         print("[GD] Inicializando os subsistemas físicos...")
-        self.H_k = 1047.0375e-6
+        self.H_k = 1000.0e-6
 
         self.rede = RedeHidraulica(levels=levels_rede, H_k=self.H_k)
-        self.placa = PlacaTermica(Lx=0.03, Ly=0.015, Nx=101, Ny=51, k=0.25, R=0.0025, fonte_calor=5e5)
+        self.placa = PlacaTermica(Lx=0.03, Ly=0.015, Nx=241, Ny=121, k=0.25, R=0.0025, fonte_calor=5e5)
         self.membrana = MembranaElastica(N=51, R=0.0025)
         
         self.acop_hidrotermico  =  HidraulicoTermico(self.rede, self.placa)
@@ -34,10 +34,6 @@ class GemeoDigital:
 
         self.p_inlet = 5e3
 
-        # Estruturas para guardar o histórico temporal (Usado no ex_4)
-        self.hist_mono = None
-        self.hist_part = None
-        
         self.preparar_estado_nominal()
 
     def preparar_estado_nominal(self):
@@ -45,28 +41,24 @@ class GemeoDigital:
         T_nominal = np.full(self.rede.numero_nos, 20.0)
         self.rede.atualizar_condutancias(T_nominal)
         self.rede.assembly()
-        self.condutancias_originais = self.rede.condutancias.copy()
+        self.condutancias_originais = self.rede.cond.copy()
         
         self.vazao_nominal = self._extrair_vazao()
-        # Limite crítico exato da seção 6.3.2 da apostila do curso
         self.limite_critico = 1.25e-5
+
         print(f"[GD] Vazão Nominal (20°C): {self.vazao_nominal:.4e} m³/s")
         print(f"[GD] Limite Crítico de Projeto: {self.limite_critico:.4e} m³/s")
 
-    # =========================================================================
-    # EX 1.1: Análise estacionária de falhas hidraulicas
-    # =========================================================================
-        # Ex 1.1 i RandomFail()
     def _RandomFail(self, p_O, f_obs):
         hm = self.acop_hidromecanico
 
         C_modificado = np.array(self.condutancias_originais, dtype=float, copy=True)
         C_modificado[np.random.rand(len(C_modificado)) < p_O] /= f_obs
 
-        self.rede.condutancias = C_modificado
+        self.rede.cond = C_modificado
         self.rede.assembly()
         
-        self.A_dim_pura = self.rede.matriz_global.copy()
+        self.A_dim_pura = self.rede.A.copy()
         A_scale = hm.pref / (hm.vref * (hm.R_dim**2))
         A_adim_array = self.A_dim_pura.toarray() * A_scale
         
@@ -81,13 +73,37 @@ class GemeoDigital:
         """Extrai a vazão permitindo alterar dinamicamente a pressão de entrada."""
         p_in = pressao_inlet if pressao_inlet is not None else self.p_inlet
         try:
-            p_sol = self.rede.resolver(pressao_imposta={1: p_in, 6: 0.0})
-            row = self.rede.matriz_global.getrow(0)
+            p_sol = self.rede.resolver(pressao_imposta={0: p_in, 5: 0.0})
+            row = self.rede.A.getrow(0)
             q = row @ p_sol
             return float(np.asarray(q).squeeze())
         except np.linalg.LinAlgError:
             return 0.0
-    
+
+    def _acoplar_termico_hidraulico(self, metodo: str = 'trapezio', n_sub: int = 100, efetiva: bool = True):
+        hm = self.acop_hidromecanico
+        ht = self.acop_hidrotermico
+
+        if efetiva:
+            viscosidades, _ = ht.viscosidades_medias_arestas(metodo=metodo, n_sub=n_sub)
+        else:
+            T_med, _ = ht.temperaturas_medias_arestas(metodo=metodo, n_sub=n_sub)
+            viscosidades = ht.calcular_viscosidade(T_med)
+
+        self.rede.atualizar_condutancias(viscosidades)
+        self.rede.assembly()
+
+        self.A_dim_pura = self.rede.A.copy()
+        A_scale = hm.pref / (hm.vref * (hm.R_dim**2))
+        A_adim_array = self.A_dim_pura.toarray() * A_scale
+
+        A_adim_array[hm.nin, :] = 0.0
+        A_adim_array[hm.nin, hm.nin] = 1.0
+
+        hm.A_adim = sp.csr_matrix(A_adim_array)
+
+        return viscosidades
+
     def ex_1_1(self):
         print("\n" + "="*60)
         print("EX 1.1: Análise estacionária de falhas hidraulicas")
@@ -101,7 +117,7 @@ class GemeoDigital:
         Y = []
 
         for i in range(1, N_amostras + 1):
-            self.rede.condutancias = self._RandomFail(p_O=0.35, f_obs=5.0)
+            self.rede.cond = self._RandomFail(p_O=0.35, f_obs=5.0)
             vazao = self._extrair_vazao()
             if vazao < self.limite_critico:
                 falhas_criticas += 1
@@ -123,8 +139,6 @@ class GemeoDigital:
         plt.savefig("imagens/gêmeo digital/ex 1_1/ii.png")
         plt.show()
 
-        # 1.1 iii Domínio de probabilidade
-        
         p_O_lin = np.linspace(0.05, 0.20, 7)
         Prob = {5: [], 10: []}
 
@@ -132,7 +146,7 @@ class GemeoDigital:
             for f_obs in Prob:
                 falhas_criticas = 0
                 for i in range(1, N_amostras + 1):
-                    self.rede.condutancias = self._RandomFail(p_O=p_O, f_obs=f_obs)
+                    self.rede.cond = self._RandomFail(p_O=p_O, f_obs=f_obs)
                     self.rede.assembly()
                     vazao = self._extrair_vazao()
 
@@ -152,12 +166,12 @@ class GemeoDigital:
         plt.savefig("imagens/gêmeo digital/ex 1_1/iii.png")
         plt.show()
 
-    # =========================================================================
-    # EX 1.2 Análise Dinâmica do Gêmeo Digital Completo
-    # =========================================================================
-    def solver_transiente(self, dt: float = None, time_end: float = None, ruido: bool = False):
+    def solver_transiente(self, dt: float = None, time_end: float = None, ruido: bool = False, acoplar_termico: bool = False):
         if dt is None: dt = self.dt
         if time_end is None: time_end = self.time_end
+
+        if acoplar_termico:
+            self._acoplar_termico_hidraulico()
 
         hm = self.acop_hidromecanico
         n_m, n_p = hm.nm, hm.np_nodes
@@ -208,20 +222,18 @@ class GemeoDigital:
         
         trapz_func = getattr(np, 'trapezoid', getattr(np, 'trapz', None))
         energia_total = float(trapz_func(hist['power'], dx=dt))
-
-        print(energia_total)
-
+        # print(energia_total)
         return hist, (w, v, p, None, energia_total)
     
     def ex_1_2(self, p_O=0.50, f_obs=10.0):
         N_amostras = 2000
-        Prob = {0.001: [], 0.025: [], 0.05: [], 0.1: []}
+        Prob = {0.05: [], 0.1: []}
 
         for dt in Prob:
             print(f"[dt={dt}]")
             num = 0
             for i in range(1, N_amostras + 1):
-                self.rede.condutancias = self._RandomFail(p_O=p_O, f_obs=f_obs)
+                self.rede.cond = self._RandomFail(p_O=p_O, f_obs=f_obs)
                 _, (_, _, _, _, energy) = self.solver_transiente(dt, 4.0)
 
                 if energy < 7.0:
@@ -251,15 +263,11 @@ class GemeoDigital:
         plt.savefig(f"imagens/gêmeo digital/ex 1_2.png")
         plt.show()
 
-    # =========================================================================
-    # EX 2: Investigando o comportamento do sistema via aproximação de dados
-    # =========================================================================
     def ex_2(self):
         hist, _ = self.solver_transiente(dt=0.05, time_end=4.0, ruido=True)
         t_dados = hist['t']
         P_dados = hist['power']
 
-        # Garante que a malha fina use exatamente o limite dos dados gerados
         t_fino = np.linspace(0, t_dados[-1], 500)
 
         interp_linear = interp1d(t_dados, P_dados, kind='linear')
@@ -288,96 +296,26 @@ class GemeoDigital:
         for m in graus_ajuste:
             erros_polinomial[m] = calcular_erro_l2(polinomios_ajuste[m])
 
-        # ------------------------------------------------------------------
-        # Underfitting (m = 3)
-        # ------------------------------------------------------------------
-        plt.figure(figsize=(10, 5))
-        plt.plot(t_dados, P_dados, 'ko', alpha=0.5,
-                label=r'Dados Originais $\mathcal{P}(t)$')
-        plt.plot(
-            t_fino,
-            polinomios_ajuste[3],
-            '--',
-            linewidth=2,
-            label=f'Polinômio grau 3 ($L_2={erros_polinomial[3]:.4f}$)'
-        )
-        plt.title('Underfitting — Regressão Polinomial de Grau 3')
+        plt.figure(figsize=(12, 8))
+        plt.plot(t_dados, P_dados, 'ko', alpha=0.5, label=r'Dados Originais Ruidosos $\mathcal{P}(t)$')
+        plt.plot(t_fino, P_linear, '-', label=f'Spline Linear ($L_2 = {erro_linear:.4f}$)', linewidth=1.5)
+        plt.plot(t_fino, P_cubica, '-', label=f'Spline Cúbico ($L_2 = {erro_cubica:.4f}$)', linewidth=1.5)
+
+        for m in graus_ajuste:
+            if m == 3:
+                lbl = f'Polinômio $m=3$ (Underfitting) ($L_2 = {erros_polinomial[m]:.4f}$)'
+            elif m == 15:
+                lbl = f'Polinômio $m=15$ (Overfitting) ($L_2 = {erros_polinomial[m]:.4f}$)'
+            else:
+                lbl = f'Polinômio $m={m}$ (Ajuste Ótimo) ($L_2 = {erros_polinomial[m]:.4f}$)'
+            plt.plot(t_fino, polinomios_ajuste[m], '--', label=lbl)
+
+        plt.title('Aproximação Numérica e Regressão da Potência Instantânea')
         plt.xlabel('Tempo Adimensional ($t$)')
         plt.ylabel('Potência $p(t)$')
         plt.grid(True, linestyle=':', alpha=0.6)
-        plt.legend()
-        plt.savefig("imagens/gêmeo digital/ex 2_underfitting.png")
-        plt.show()
-
-        # ------------------------------------------------------------------
-        # Ajuste ótimo (m = 8)
-        # ------------------------------------------------------------------
-        plt.figure(figsize=(10, 5))
-        plt.plot(t_dados, P_dados, 'ko', alpha=0.5,
-                label=r'Dados Originais $\mathcal{P}(t)$')
-        plt.plot(
-            t_fino,
-            polinomios_ajuste[8],
-            '--',
-            linewidth=2,
-            label=f'Polinômio grau 8 ($L_2={erros_polinomial[8]:.4f}$)'
-        )
-        plt.title('Ajuste Ótimo — Regressão Polinomial de Grau 8')
-        plt.xlabel('Tempo Adimensional ($t$)')
-        plt.ylabel('Potência $p(t)$')
-        plt.grid(True, linestyle=':', alpha=0.6)
-        plt.legend()
-        plt.savefig("imagens/gêmeo digital/ex 2_otimo.png")
-        plt.show()
-
-        # ------------------------------------------------------------------
-        # Overfitting (m = 15)
-        # ------------------------------------------------------------------
-        plt.figure(figsize=(10, 5))
-        plt.plot(t_dados, P_dados, 'ko', alpha=0.5,
-                label=r'Dados Originais $\mathcal{P}(t)$')
-        plt.plot(
-            t_fino,
-            polinomios_ajuste[15],
-            '--',
-            linewidth=2,
-            label=f'Polinômio grau 15 ($L_2={erros_polinomial[15]:.4f}$)'
-        )
-        plt.title('Overfitting — Regressão Polinomial de Grau 15')
-        plt.xlabel('Tempo Adimensional ($t$)')
-        plt.ylabel('Potência $p(t)$')
-        plt.grid(True, linestyle=':', alpha=0.6)
-        plt.legend()
-        plt.savefig("imagens/gêmeo digital/ex 2_overfitting.png")
-        plt.show()
-
-        # ------------------------------------------------------------------
-        # Comparação dos Splines
-        # ------------------------------------------------------------------
-        plt.figure(figsize=(10, 5))
-        plt.plot(t_dados, P_dados, 'ko', alpha=0.5,
-                label=r'Dados Originais $\mathcal{P}(t)$')
-
-        plt.plot(
-            t_fino,
-            P_linear,
-            linewidth=2,
-            label=f'Spline Linear ($L_2={erro_linear:.4f}$)'
-        )
-
-        plt.plot(
-            t_fino,
-            P_cubica,
-            linewidth=2,
-            label=f'Spline Cúbico ($L_2={erro_cubica:.4f}$)'
-        )
-
-        plt.title('Interpolação Local por Splines')
-        plt.xlabel('Tempo Adimensional ($t$)')
-        plt.ylabel('Potência $p(t)$')
-        plt.grid(True, linestyle=':', alpha=0.6)
-        plt.legend()
-        plt.savefig("imagens/gêmeo digital/ex 2_splines.png")
+        plt.legend(loc='upper right')
+        plt.savefig("imagens/gêmeo digital/ex 2.png")
         plt.show()
 
         print("-" * 50)
@@ -410,24 +348,16 @@ class GemeoDigital:
 
         A_ref = hm.A_adim.copy()
 
-        # ------------------------------------------------------------------
-        # Viscosidade
-        # ------------------------------------------------------------------
         def mu(T):
             return 0.001791 / (1.0 + 0.03368 * T + 0.000221 * T**2)
 
-        # ------------------------------------------------------------------
-        # Escalonamento de A
-        # ------------------------------------------------------------------
         def A_scale(fator):
-            """Com Dirichlet — usada no solver."""
             A = A_ref.multiply(fator).tolil()
             A[hm.nin, :] = 0.0
             A[hm.nin, hm.nin] = 1.0
             return A.tocsr()
 
         def A_scale_fisica(fator):
-            """Sem Dirichlet — usada para extração de vazão física."""
             return A_ref.multiply(fator).tocsr()
 
         def A_para_TC(TC, TC_ref=125.0):
@@ -438,43 +368,15 @@ class GemeoDigital:
             f = (H_um / H_ref)**4
             return A_scale(f), A_scale_fisica(f)
 
-        # ------------------------------------------------------------------
-        # Motor numérico
-        # ------------------------------------------------------------------
         def _solver(A_local, A_fisica, H_um=None):
-            """
-            Resolve o sistema acoplado com Euler implícito.
-            H_um != None  →  calcula sensibilidades analíticas dY/dH.
-
-            Definições e expressões analíticas:
-            ─────────────────────────────────────────────────────────────
-            Potência:   P(t)  = (p_in - p) · (h²·U·v)
-            Energia:    E     = Σ P(t)·dt   [trapézio]
-
-            dP/dH = (p_in - p)·(h²·U·sv) - sp·(h²·U·v)   [regra produto]
-            dE/dH = Σ dP/dH · dt
-
-            q_inlet = A_fisica[nin,:] · p                  [linha sem Dirichlet]
-            dq/dH   = dA_fisica/dH[nin,:] · p
-                    + A_fisica[nin,:] · sp                  [regra produto]
-
-            V(tf)  = h² · (uns · w)                        [nós interiores]
-            dV/dH  = h² · (uns · sw)
-
-            Condição de Dirichlet nas sensibilidades:
-            - dA/dH tem linha nin zerada (p[nin] prescrito, independe de H)
-            - sp[nin] = 0 após cada passo  (dp[nin]/dH = 0 por definição)
-            ─────────────────────────────────────────────────────────────
-            """
-            # Reconstrói A_ref do zero com H=1000 μm garantido
-            H_ref = 1000e-6  # metros
+            H_ref = 1000e-6
             mu_ref = 5e-4
             kappa_ref = (np.pi * H_ref**4) / (128 * mu_ref)
 
             C_ref = []
-            for (i, j) in self.rede.conectividade:
-                n1 = self.rede.posicoes_nos[i]
-                n2 = self.rede.posicoes_nos[j]
+            for (i, j) in self.rede.conec:
+                n1 = self.rede.xnos[i]
+                n2 = self.rede.xnos[j]
                 L  = np.sqrt((n1[0]-n2[0])**2 + (n1[1]-n2[1])**2)
                 C_ref.append(kappa_ref / L)
 
@@ -503,21 +405,17 @@ class GemeoDigital:
             b_p    = np.zeros(n_p)
             b_p[hm.nin] = idt * p_adim
 
-            # dA/dH = (4/H)·A  [Eq. 6.16]
-            # A linha nin é zerada: p[nin] é prescrito, não depende de H
             if calc_sens:
                 dA_dH = A_local.multiply(4.0 / H_um).tolil()
                 dA_dH[hm.nin, :] = 0.0
                 dA_dH = dA_dH.tocsr()
 
-                # Versão física (sem Dirichlet) para dq/dH
                 dA_dH_fisica = A_fisica.multiply(4.0 / H_um)
 
             E  = 0.0
             dE = 0.0
 
             for _ in range(n_steps):
-                # --- Estado físico ---
                 rhs = np.concatenate([idt * w, idt * (hm.M @ v), b_p])
                 sol = solveG(rhs)
                 w   = sol[:n_m]
@@ -528,27 +426,23 @@ class GemeoDigital:
                 pot  = float((p_adim - p) @ qmem)
                 E   += pot * dt
 
-                # --- Sensibilidades em relação a H ---
                 if calc_sens:
                     rhs_s = np.concatenate([
                         idt * sw,
                         idt * (hm.M @ sv),
-                        -(idt * dA_dH) @ p     # <<< CORREÇÃO: G tem bloco idt*A(H) ⇒ dG/dH = idt·dA/dH
+                        -(idt * dA_dH) @ p
                     ])
                     sols   = solveG(rhs_s)
                     sw     = sols[:n_m]
                     sv     = sols[n_m:2*n_m]
                     sp_vec = sols[2*n_m:]
 
-                    # dp[nin]/dH = 0: p[nin] prescrito não depende de H
                     sp_vec[hm.nin] = 0.0
 
-                    # dP/dH = (p_in - p)·(h²·U·sv) - sp·(h²·U·v)
                     qmem_s = h2 * (hm.U @ sv)
                     dP = float((p_adim - p) @ qmem_s) - float(sp_vec @ qmem)
                     dE += dP * dt
 
-            # --- Grandezas no instante final ---
             V_f  = float(h2 * np.dot(hm.uns, w))
             q_in = float((A_fisica[hm.nin, :] @ p).sum())
 
@@ -560,9 +454,6 @@ class GemeoDigital:
 
             return E, q_in, V_f
 
-        # ------------------------------------------------------------------
-        # VARREDURA EM TC  (H = 1000 μm fixo)
-        # ------------------------------------------------------------------
         print("\nVarrendo TC ∈ [0, 250] °C ...")
         TC_vec = np.linspace(0.0, 250.0, 30)
         dTC    = 1.0
@@ -595,9 +486,6 @@ class GemeoDigital:
         dq_fw_TC = np.array(dq_fw_TC); dq_ct_TC = np.array(dq_ct_TC)
         dV_fw_TC = np.array(dV_fw_TC); dV_ct_TC = np.array(dV_ct_TC)
 
-        # ------------------------------------------------------------------
-        # VARREDURA EM H  (TC = 125 °C fixo)
-        # ------------------------------------------------------------------
         print("Varrendo H ∈ [500, 1500] μm ...")
         H_vec = np.linspace(500.0, 1500.0, 30)
         dH    = 1.0
@@ -641,7 +529,6 @@ class GemeoDigital:
             Ef, qf, Vf = _solver(Alf, Aff)
             Eb, _,  _  = _solver(Alb, Afb)
 
-            # ---- DIAGNÓSTICO: imprime só no primeiro ponto e para ----
             print(f"\n--- DIAGNÓSTICO H={H:.1f} μm ---")
             print(f"E0={E0:.6f}  Ef={Ef:.6f}  Eb={Eb:.6f}")
             print(f"dE FWD = {(Ef-E0)/dH:.8f}")
@@ -651,12 +538,8 @@ class GemeoDigital:
             print(f"dV FWD = {(Vf-V0)/dH:.10f}")
             print(f"dV CTD = {(Vf-Eb)/(2*dH):.10f}")
             print(f"dV AN  = {dV_a:.10f}")
-            break  # remove após diagnóstico
-            # ---------------------------------------------------------
+            break
 
-        # ==========================================================
-        # ENERGIA
-        # ==========================================================
         fig, axs = plt.subplots(2, 2, figsize=(12, 8))
 
         axs[0,0].plot(TC_vec, E_TC, lw=2)
@@ -688,10 +571,6 @@ class GemeoDigital:
         plt.savefig("imagens/gêmeo digital/ex3_energia.png")
         plt.show()
 
-
-        # ==========================================================
-        # VAZÃO
-        # ==========================================================
         fig, axs = plt.subplots(2, 2, figsize=(12, 8))
 
         axs[0,0].plot(TC_vec, q_TC, lw=2)
@@ -722,10 +601,6 @@ class GemeoDigital:
         plt.savefig("imagens/gêmeo digital/ex3_vazao.png")
         plt.show()
 
-
-        # ==========================================================
-        # VOLUME
-        # ==========================================================
         fig, axs = plt.subplots(2, 2, figsize=(12, 8))
 
         axs[0,0].plot(TC_vec, V_TC, lw=2)
@@ -805,33 +680,27 @@ class GemeoDigital:
         print("=" * 70)
 
         for i in range(max_iter):
-            # 2. Aplica o fator de proporcionalidade cúbico (H / H_nominal)^3 para achar a energia atual
             fator_proporcionalidade = (H_atual / H_nominal) ** 3
             E_atual = E_nominal * fator_proporcionalidade
             
-            # Restrição do projeto: E(H) - 7.5 = 0
             residuo = E_atual - 7.5
             
             print(f"{i:<6d} | {H_atual:<16.4f} | {E_atual:<14.6f} | {abs(residuo):<14.2e}")
 
-            # Critério de parada: tolerância atingida
             if abs(residuo) < tol:
                 print("=" * 70)
                 print(f"CONVERGÊNCIA PERFEITA ATINGIDA: H ótimo = {H_atual:.4f} μm")
                 print("=" * 70)
                 return H_atual
 
-            # 3. Calcula a derivada analítica exata baseada no fator de proporcionalidade
             df_dH = 3.0 * E_nominal * (H_atual ** 2) / (H_nominal ** 3)
 
             if abs(df_dH) < 1e-12:
                 print("Erro: Derivada nula encontrada.")
                 break
 
-            # 4. Atualização clássica de Newton-Raphson (passo exato e limpo)
             H_atual = H_atual - (residuo / df_dH)
             
-            # Mantém o palpite estritamente dentro do domínio físico do projeto [500, 1500]
             H_atual = max(500.0, min(H_atual, 1500.0))
 
         print("Aviso: O número máximo de iterações foi atingido.")
@@ -852,9 +721,6 @@ def plot_potencia(hist):
     plt.tight_layout()
     plt.show()
 
-# =============================================================================
-# Pipeline de Execução Sequencial do Sistema Completo
-# =============================================================================
 if __name__ == "__main__":
     gd = GemeoDigital()
     # gd.ex_1_1()
@@ -863,5 +729,5 @@ if __name__ == "__main__":
     # gd.ex_3_1()
     # gd.ex_3_2()
 
-    hist, _ = gd.solver_transiente(0.01, 4.0)
+    hist, _ = gd.solver_transiente(0.01, 4.0, acoplar_termico=False)
     plot_potencia(hist)

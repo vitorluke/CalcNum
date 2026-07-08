@@ -4,9 +4,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+import time
 
 from src.graphs_utils.gera_grafo import gera_grafo
-
 
 class RedeHidraulica:
     def __init__(self, levels: int = 3, A_k=None, H_k=None):
@@ -31,128 +31,71 @@ class RedeHidraulica:
 
         self.numero_nos = len(coordenadas)
 
-        self.conectividade = np.asarray(
+        self.conec = np.asarray(
             conectividade,
             dtype=np.int32
         )
 
-        self.posicoes_nos = np.asarray(
+        self.xnos = np.asarray(
             coordenadas,
             dtype=np.float64
         )
 
-        self.i_edges = self.conectividade[:, 0]
-        self.j_edges = self.conectividade[:, 1]
+        self.i_edges = self.conec[:, 0]
+        self.j_edges = self.conec[:, 1]
 
         dx = (
-            self.posicoes_nos[self.i_edges, 0]
-            - self.posicoes_nos[self.j_edges, 0]
+            self.xnos[self.i_edges, 0]
+            - self.xnos[self.j_edges, 0]
         )
 
         dy = (
-            self.posicoes_nos[self.i_edges, 1]
-            - self.posicoes_nos[self.j_edges, 1]
+            self.xnos[self.i_edges, 1]
+            - self.xnos[self.j_edges, 1]
         )
 
         self.comprimentos = np.sqrt(
             dx * dx + dy * dy
         )
 
-        self.numero_canos = len(
-            self.conectividade
-        )
+        self.numero_canos = len(self.conec)
+        self.D = np.zeros((self.numero_canos, self.numero_nos))
+        for k, (i, j) in enumerate(self.conec):
+            self.D[k, i] = 1
+            self.D[k, j] = -1
 
-        rows = np.repeat(
-            np.arange(self.numero_canos),
-            2
-        )
-
-        cols = self.conectividade.reshape(-1)
-
-        data = np.tile(
-            [1.0, -1.0],
-            self.numero_canos
-        )
-
-        self.matriz_incidencia = sp.csr_matrix(
-            (data, (rows, cols)),
-            shape=(
-                self.numero_canos,
-                self.numero_nos
-            )
-        )
-
-        self.condutancias = self._calcular_condutancias(
-            np.full(
-                self.numero_nos,
-                self.temperatura_referencia
-            )
-        )
+        self.cond = self._calcular_condutancias(np.full(self.numero_nos, self.temperatura_referencia))
 
         self.vazoes_por_no = None
         self.pressao_por_no = None
 
-        self.matriz_global = None
+        self.A = None
 
-        self.pressao = None
-        self.vazao = None
+        self.p = None
+        self.Q = None
 
         self.historico_pressao = []
         self.historico_vazao = []
 
     def viscosidade(self, T):
-        return (
-            0.001791
-            /
-            (
-                1
-                + 0.03368 * T
-                + 0.000221 * T**2
-            )
-        )
+        return 0.001791 / (1 + 0.03368 * T + 0.000221 * T*T)
 
-    def _calcular_condutancias(
-        self,
-        temperaturas
-    ):
-        T_media = 0.5 * (
-            temperaturas[self.i_edges]
-            + temperaturas[self.j_edges]
-        )
+    def _calcular_condutancias(self, temperaturas):
+        T_media = 0.5 * (temperaturas[self.i_edges] + temperaturas[self.j_edges])
 
-        mu = self.viscosidade(
-            T_media
-        )
+        mu = self.viscosidade(T_media)
 
-        kappa = (
-            np.pi * self.D_k**4
-        ) / (
-            128.0 * mu
-        )
+        kappa = np.pi * self.D_k**4 / (128.0 * mu)
 
-        return (
-            kappa
-            / self.comprimentos
-        )
+        return kappa/ self.comprimentos
 
     def assembly(self):
-
         ne = self.numero_canos
 
-        rows = np.empty(
-            4 * ne,
-            dtype=np.int32
-        )
+        rows = np.empty(4 * ne, dtype=np.int32)
+        cols = np.empty(4 * ne, dtype=np.int32)
 
-        cols = np.empty(
-            4 * ne,
-            dtype=np.int32
-        )
-
-        data = np.empty(
-            4 * ne,
-            dtype=np.float64
-        )
+        data = np.empty(4 * ne,dtype=np.float64)
 
         rows[0::4] = self.i_edges
         rows[1::4] = self.j_edges
@@ -164,169 +107,97 @@ class RedeHidraulica:
         cols[2::4] = self.j_edges
         cols[3::4] = self.i_edges
 
-        data[0::4] = self.condutancias
-        data[1::4] = self.condutancias
-        data[2::4] = -self.condutancias
-        data[3::4] = -self.condutancias
+        data[0::4] = self.cond
+        data[1::4] = self.cond
+        data[2::4] = -self.cond
+        data[3::4] = -self.cond
 
-        self.matriz_global = sp.coo_matrix(
-            (data, (rows, cols)),
-            shape=(
-                self.numero_nos,
-                self.numero_nos
-            )
-        ).tocsr()
+        self.A = sp.coo_matrix((data, (rows, cols)), shape=(self.numero_nos, self.numero_nos)).tocsr()
 
-    def resolver(
-        self,
-        pressao_imposta=None,
-        vazao_imposta=None
-    ):
-
+    def resolver(self, pressao_imposta=None, vazao_imposta=None):
         if pressao_imposta is None:
             pressao_imposta = {}
 
         if vazao_imposta is None:
             vazao_imposta = {}
 
-        if self.matriz_global is None:
+        if self.A is None:
             self.assembly()
 
-        matriz_modificada = (
-            self.matriz_global
-            .tolil(copy=True)
-        )
+        matriz_modificada = self.A.tolil(copy=True)
 
-        rhs = np.zeros(
-            self.numero_nos
-        )
+        b = np.zeros(self.numero_nos)
 
         for k, vazao in vazao_imposta.items():
-            rhs[k - 1] = vazao
+            b[k] = vazao
 
         for k, pressao in pressao_imposta.items():
+            matriz_modificada[k, :] = 0.0
+            matriz_modificada[k, k] = 1.0
 
-            idx = k - 1
+            b[k] = pressao
 
-            matriz_modificada[idx, :] = 0.0
-            matriz_modificada[idx, idx] = 1.0
-
-            rhs[idx] = pressao
-
-        self.pressao = spla.spsolve(
-            matriz_modificada.tocsc(),
-            rhs
-        )
+        self.p = spla.spsolve(matriz_modificada.tocsc(), b)
 
         self.calcular_vazoes()
 
-        self.historico_pressao.append(
-            self.pressao.copy()
-        )
+        self.historico_pressao.append(self.p.copy())
+        self.historico_vazao.append(self.Q.copy())
 
-        self.historico_vazao.append(
-            self.vazao.copy()
-        )
-
-        return self.pressao
+        return self.p
 
     def calcular_vazoes(self):
+        dp = self.D @ self.p
+        self.Q = self.cond * dp
 
-        dp = (
-            self.matriz_incidencia
-            @ self.pressao
-        )
-
-        self.vazao = (
-            self.condutancias
-            * dp
-        )
-
-        return self.vazao
+        return self.Q
 
     def calcular_potencia(self):
-
-        if self.pressao is None:
-            print(
-                "Erro: Resolva a rede antes de plotar."
-            )
+        if self.p is None:
+            print("Erro: Resolva a rede antes de plotar.")
             return None
 
-        return (
-            self.pressao
-            @ (
-                self.matriz_global
-                @ self.pressao
-            )
-        )
+        p = self.p
+        D = self.D
+        K = np.diag(self.cond)
 
-    def plotaRede(
-        self,
-        scale=1.0,
-        save_path=None
-    ):
+        W = p.T @ D.T @ K @ D @ p
 
-        if (
-            self.pressao is None
-            or self.vazao is None
-        ):
-            print(
-                "Erro: Resolva a rede antes de plotar."
-            )
+        return W
+
+    def plotaRede(self, scale=1.0, save_path=None):
+        if self.p is None or self.Q is None:
+            print("Erro: Resolva a rede antes de plotar.")
             return
 
-        coord = (
-            self.posicoes_nos
-            * scale
-        )
+        coord = self.xnos * scale
 
-        edges = self.conectividade
+        edges = self.conec
 
-        p = self.pressao
-        q = self.vazao
+        p = self.p
+        q = self.Q
 
         segs = []
         mids = []
 
         for (i, j) in edges:
-
             x1, y1 = coord[i]
             x2, y2 = coord[j]
 
-            segs.append(
-                (
-                    (x1, y1),
-                    (x2, y2)
-                )
-            )
+            segs.append(((x1, y1), (x2, y2)))
 
-            mids.append(
-                (
-                    (x1 + x2) / 2.0,
-                    (y1 + y2) / 2.0
-                )
-            )
+            mids.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0))
 
         segs = np.asarray(segs)
         mids = np.asarray(mids)
 
-        fig, ax = plt.subplots(
-            figsize=(10, 10)
-        )
+        fig, ax = plt.subplots(figsize=(10, 10))
 
-        cmap = plt.get_cmap(
-            "coolwarm"
-        )
+        cmap = plt.get_cmap("coolwarm")
 
-        norm = plt.Normalize(
-            vmin=float(p.min()),
-            vmax=float(p.max())
-        )
+        norm = plt.Normalize(vmin=float(p.min()), vmax=float(p.max()))
 
-        colors = [
-            cmap(norm(pi))
-            for pi in p
-        ]
+        colors = [cmap(norm(pi)) for pi in p]
 
         ax.scatter(
             coord[:, 0],
@@ -339,11 +210,7 @@ class RedeHidraulica:
 
         arrow_scale = 0.05
 
-        for idx, (
-            (x1, y1),
-            (x2, y2)
-        ) in enumerate(segs):
-
+        for idx, ((x1, y1), (x2, y2)) in enumerate(segs):
             ax.plot(
                 [x1, x2],
                 [y1, y2],
@@ -368,12 +235,7 @@ class RedeHidraulica:
             nx = -dyn
             ny = dxn
 
-            q_dir = (
-                1
-                if p[edges[idx, 0]]
-                > p[edges[idx, 1]]
-                else -1
-            )
+            q_dir = 1 if p[edges[idx, 0]]> p[edges[idx, 1]]else -1
 
             ax.annotate(
                 "",
@@ -434,44 +296,149 @@ class RedeHidraulica:
         ax.set_aspect("equal")
         ax.axis("off")
 
-        ax.set_xlim(
-            coord[:, 0].min() - 0.5,
-            coord[:, 0].max() + 0.5
-        )
+        ax.set_xlim(coord[:, 0].min() - 0.5, coord[:, 0].max() + 0.5)
 
-        ax.set_ylim(
-            coord[:, 1].min() - 0.5,
-            coord[:, 1].max() + 0.5
-        )
+        ax.set_ylim(coord[:, 1].min() - 0.5, coord[:, 1].max() + 0.5)
 
-        sm = cm.ScalarMappable(
-            cmap=cmap,
-            norm=norm
-        )
+        sm = cm.ScalarMappable(cmap=cmap,norm=norm)
 
-        plt.colorbar(
-            sm,
-            ax=ax,
-            label="Pressão (p)"
-        )
+        plt.colorbar(sm, ax=ax,label="Pressão (p)")
 
         if save_path:
-            plt.savefig(
-                save_path,
-                dpi=300
-            )
+            plt.savefig(save_path, dpi=300)
 
         plt.show()
 
-    def atualizar_condutancias(
-        self,
-        temperaturas
-    ):
+    def atualizar_condutancias(self, temperaturas):
 
-        self.condutancias = (
-            self._calcular_condutancias(
-                temperaturas
-            )
-        )
+        self.cond = self._calcular_condutancias(temperaturas)
+        self.A = None
 
-        self.matriz_global = None
+def plot_pressao_maxima(vetor_tempo, vetor_pressao, titulo, caminho_salvar=None):
+    plt.figure(figsize=(8, 5))
+    plt.plot(vetor_tempo, vetor_pressao, label="Pressão Máxima", color="darkred")
+    plt.xlabel("Tempo (s)")
+    plt.ylabel("Pressão (Pa)")
+    plt.title(titulo)
+    plt.grid(True)
+    plt.legend()
+    if caminho_salvar:
+        plt.savefig(caminho_salvar, dpi=300)
+    plt.show()
+
+def resolver_base_superposicao(rede:RedeHidraulica, nos_atm, no_injecao):
+    bombas_unitarias = {no_injecao: 1.0}
+    pressao_base = rede.resolver(nos_atm, bombas_unitarias)
+    return pressao_base.copy()
+
+def exercicio_4(omega=3, n_passos=1000, tempo_final=10):
+    rede = RedeHidraulica(levels=3, A_k=2.5e-7)
+
+    tempo = np.linspace(0, tempo_final, n_passos)
+    q0_t = np.add(0.1e-6 * np.sin(omega * tempo), 1e-6)
+    
+    pressao_base_0 = resolver_base_superposicao(rede, {5: 0.0}, 0)
+    
+    pressoes_maximas = []
+    
+    for q in q0_t:
+        pressao_t = q * pressao_base_0
+        pressoes_maximas.append(np.max(pressao_t))
+    
+    plot_pressao_maxima(tempo, pressoes_maximas, "Ex 4: Pressão Máxima na Rede ao Longo do Tempo", "imagens/rede hidraulica/ex4.png")
+    return tempo, pressoes_maximas
+
+def exercicio_5(omega=4, n_passos=1000, tempo_final=10):
+    rede = RedeHidraulica(levels=3, A_k=2.5e-7)
+
+    tempo = np.linspace(0, tempo_final, n_passos)
+    q0_t = np.add(0.1e-6 * np.sin(3 * tempo), 1e-6)
+    q175_t = np.add(0.01e-6 * np.cos(omega * tempo), 0.1e-6)
+    
+    pressao_base_0 = resolver_base_superposicao(rede, {5: 0.0}, 0)
+
+    last_node = rede.numero_nos if rede.numero_nos < 176 else 176
+
+    pressao_base_175 = resolver_base_superposicao(rede, {5: 0.0}, 175)
+    
+    pressoes_maximas = []
+    
+    for q0, q175 in zip(q0_t, q175_t):
+        pressao_t = (q0 * pressao_base_0) + (q175 * pressao_base_175)
+        pressoes_maximas.append(np.max(pressao_t))
+        
+    plot_pressao_maxima(tempo, pressoes_maximas, "Ex 5: Pressão Máxima com Múltiplas Injeções", "imagens/rede hidraulica/ex5.png")
+    return tempo, pressoes_maximas
+
+def calcular_temperatura(t):
+    return 20.0 + 0.9 * (t ** 2)
+
+def calcular_viscosidade(temp):
+    return 0.001791 / (1 + 0.03368 * temp + 0.000221 * (temp ** 2))
+
+def exercicio_6(n_passos=1000, tempo_final=10):
+    rede = RedeHidraulica(levels=3, A_k=2.5e-7)
+
+    tempo = np.linspace(0, tempo_final, n_passos)
+    q0_constante = 0.1e-6
+    
+    pressao_base_0 = resolver_base_superposicao(rede, {5: 0.0}, 0)
+    
+    temperatura_inicial = calcular_temperatura(0)
+    viscosidade_inicial = calcular_viscosidade(temperatura_inicial)
+    
+    pressoes_maximas = []
+    
+    for t in tempo:
+        temp_atual = calcular_temperatura(t)
+        visc_atual = calcular_viscosidade(temp_atual)
+        fator_escala = visc_atual / viscosidade_inicial
+        pressao_t = (q0_constante * pressao_base_0) * fator_escala
+        pressoes_maximas.append(np.max(pressao_t))
+        
+    plot_pressao_maxima(tempo, pressoes_maximas, "Ex 6: Pressão Máxima com Viscosidade Variável", "imagens/rede hidraulica/ex6.png")
+    return tempo, pressoes_maximas
+
+def avaliar_desempenho_rede(niveis, num_execucoes=10):
+    tempos_montagem = []
+    tempos_resolucao = []
+    
+    for _ in range(num_execucoes):
+        inicio_montagem = time.perf_counter()
+        rede = RedeHidraulica(levels=niveis, A_k=2.5e-7)
+        rede.assembly()
+        fim_montagem = time.perf_counter()
+        tempos_montagem.append(fim_montagem - inicio_montagem)
+        
+        inicio_resolucao = time.perf_counter()
+        rede.resolver({5: 0.0}, {0: 1.0})
+        fim_resolucao = time.perf_counter()
+        tempos_resolucao.append(fim_resolucao - inicio_resolucao)
+        
+    tempo_medio_montagem = np.mean(tempos_montagem)
+    tempo_medio_resolucao = np.mean(tempos_resolucao)
+    
+    return rede.numero_nos, tempo_medio_montagem, tempo_medio_resolucao
+
+def exercicio_7(niveis):
+    print(f"{'Nível':<10} | {'Nº de Nós':<15} | {'Tempo Médio Montagem (s)':<25} | {'Tempo Médio Resolução (s)':<25}")
+    print("-" * 80)
+    
+    for nivel in niveis:
+        # nos, arestas = gera_grafo(levels=nivel)
+        # numero_nos = len(nos)
+        # condutancias = np.ones(len(arestas))
+        
+        # rede = RedeHidraulica(numero_nos=numero_nos, conectividade=arestas, condutancias=condutancias, coordenadas=nos)
+
+        numero_nos, t_montagem, t_resolucao = avaliar_desempenho_rede(nivel)
+        print(f"{nivel:<10} | {numero_nos:<15} | {t_montagem:<25.6e} | {t_resolucao:<25.6e}")
+
+def main():
+    exercicio_4()
+    exercicio_5()
+    exercicio_6()
+    exercicio_7(range(1,11))
+
+if __name__ == "__main__":
+    main()

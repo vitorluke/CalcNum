@@ -9,33 +9,28 @@ from src.classes.rede_hidraulica import RedeHidraulica
 from src.classes.placa_termica import PlacaTermica
 
 class HidraulicoTermico:
-    def __init__(self, rede, placa):
+    def __init__(self, rede:RedeHidraulica, placa:PlacaTermica):
         self.placa = placa
         self.rede = rede
         
-        # =========================================================
-        # CORREÇÃO DEFINITIVA: Escala e Distribuição da Rede
-        # Garante que a rede ocupe apenas a região esquerda (0 a 0.02 m)
-        # e fique perfeitamente centralizada no eixo Y.
-        # =========================================================
-        max_x = np.max(self.rede.posicoes_nos[:, 0])
-        if max_x > 0:
-            fator_escala = 0.02 / max_x
-            self.rede.posicoes_nos[:, 0] *= fator_escala
-            self.rede.posicoes_nos[:, 1] *= fator_escala  # Mantém a proporção geométrica
+        fator_escala = 0.02 / self.rede.xnos[5, 0]
+        
+        self.rede.xnos[:, 0] *= fator_escala
+        self.rede.xnos[:, 1] *= fator_escala
 
-            self.rede.condutancias /= fator_escala
-            self.rede.matriz_global = None
+        self.rede.cond /= fator_escala
             
-        y_min = np.min(self.rede.posicoes_nos[:, 1])
-        y_max = np.max(self.rede.posicoes_nos[:, 1])
+        y_min = np.min(self.rede.xnos[:, 1])
+        y_max = np.max(self.rede.xnos[:, 1])
         y_mid = (y_min + y_max) / 2.0
         
-        # Move a rede para o centro exato da placa (Ly / 2)
-        self.rede.posicoes_nos[:, 1] += (self.placa.Ly / 2.0) - y_mid
+        self.rede.xnos[:, 1] += (self.placa.Ly / 2.0) - y_mid
         
-        kx, ky = self.calcular_k_faces(dmax=0.001)
-        self.placa.T = self.resolver_sistema_ex1(kx, ky, Tc=35.0)
+        # kx, ky = self.calcular_k_faces(dmax=0.001)
+        # self.placa.T = self.resolver_sistema_ex1(kx, ky, Tc=35.0)
+        
+        self.rede.assembly()
+        self.placa.resolver_circulo(Tc=35.0)
 
     @classmethod
     def instantiate_subsystems(cls, Nx, Ny):
@@ -48,9 +43,9 @@ class HidraulicoTermico:
             R=0.0025,
             fonte_calor=5e5
         )
-        rede = RedeHidraulica(levels=3)
+        rede = RedeHidraulica(levels=3, A_k=2.5e-7)
 
-        return cls(placa, rede)
+        return cls(rede, placa)
 
     # =======================================================================
     # MÉTODOS ORIGINAIS MANTIDOS (Viscosidade, Integração, etc.)
@@ -95,8 +90,8 @@ class HidraulicoTermico:
         raise ValueError()
 
     def temperatura_media_aresta(self, i, j, interpolador, metodo='trapezio', n_sub=100):
-        p0 = self.rede.posicoes_nos[i]
-        p1 = self.rede.posicoes_nos[j]
+        p0 = self.rede.xnos[i]
+        p1 = self.rede.xnos[j]
         
         def func_T(pts):
             return interpolador(pts).ravel()
@@ -104,8 +99,8 @@ class HidraulicoTermico:
         return self.integrar_linha(p0, p1, func_T, metodo, n_sub)
 
     def viscosidade_efetiva_aresta(self, i, j, interpolador, metodo='trapezio', n_sub=100):
-        p0 = self.rede.posicoes_nos[i]
-        p1 = self.rede.posicoes_nos[j]
+        p0 = self.rede.xnos[i]
+        p1 = self.rede.xnos[j]
         
         def func_mu(pts):
             T_vals = interpolador(pts).ravel()
@@ -118,7 +113,7 @@ class HidraulicoTermico:
         temperaturas = []
         inicio = time.perf_counter()
 
-        for i, j in self.rede.conectividade:
+        for i, j in self.rede.conec:
             T_med = self.temperatura_media_aresta(i, j, interpolador, metodo, n_sub)
             temperaturas.append(T_med)
 
@@ -130,7 +125,7 @@ class HidraulicoTermico:
         viscosidades = []
         inicio = time.perf_counter()
 
-        for i, j in self.rede.conectividade:
+        for i, j in self.rede.conec:
             mu_efetiva = self.viscosidade_efetiva_aresta(i, j, interpolador, metodo, n_sub)
             viscosidades.append(mu_efetiva)
 
@@ -138,8 +133,8 @@ class HidraulicoTermico:
         return np.array(viscosidades), fim - inicio
 
     def plotar_dados_arestas(self, valores, label='Valor'):
-        coord = self.rede.posicoes_nos
-        edges = self.rede.conectividade
+        coord = self.rede.xnos
+        edges = self.rede.conec
         fig, ax = plt.subplots(figsize=(10, 5))
         cmap = plt.get_cmap('jet')
         norm = plt.Normalize(valores.min(), valores.max())
@@ -156,14 +151,14 @@ class HidraulicoTermico:
         plt.show()
 
     def temperaturas_nos(self, method='linear'):
-        coords = self.rede.posicoes_nos
+        coords = self.rede.xnos
         interpolador = self.placa.criar_interpolador(method)
         return interpolador(coords)
 
     def plotar_rede_termica(self, method='linear'):
         temperaturas = self.temperaturas_nos(method)
-        coord = self.rede.posicoes_nos
-        edges = self.rede.conectividade
+        coord = self.rede.xnos
+        edges = self.rede.conec
         fig, ax = plt.subplots(figsize=(10, 8))
 
         for (i, j) in edges:
@@ -182,7 +177,7 @@ class HidraulicoTermico:
         )
 
         for idx, (x, y) in enumerate(coord):
-            ax.text(x, y, f'{idx+1}', ha='center', va='center', fontweight='bold', color='white')
+            ax.text(x, y, f'{idx}', ha='center', va='center', fontweight='bold', color='white')
 
         plt.colorbar(scatter, ax=ax, label='Temperatura (°C)')
         ax.set_aspect('equal')
@@ -209,13 +204,13 @@ class HidraulicoTermico:
         T_med, _ = self.temperaturas_medias_arestas(metodo=metodo, n_sub=n_sub)
         viscosidades = self.calcular_viscosidade(T_med)
         self.rede.atualizar_condutancias(viscosidades)
-        self.rede.resolver()
+        self.rede.resolver(vazao_imposta={0: 1e-7, 175: 1e-6}, pressao_imposta={5: 0})
         return T_med
         
     def atualizar_condutancias_ex5(self, metodo='trapezio', n_sub=100):
         viscosidades_efetivas, _ = self.viscosidades_medias_arestas(metodo=metodo, n_sub=n_sub)
         self.rede.atualizar_condutancias(viscosidades_efetivas)
-        self.rede.resolver()
+        self.rede.resolver(vazao_imposta={0: 1e-7, 175: 1e-6}, pressao_imposta={5: 0})
         return viscosidades_efetivas
 
     # =======================================================================
@@ -231,9 +226,9 @@ class HidraulicoTermico:
         kx_faces = np.full((Nx - 1, Ny), k_base)
         ky_faces = np.full((Nx, Ny - 1), k_base)
 
-        edges = np.array(self.rede.conectividade)
-        A = self.rede.posicoes_nos[edges[:, 0]]
-        B = self.rede.posicoes_nos[edges[:, 1]]
+        edges = np.array(self.rede.conec)
+        A = self.rede.xnos[edges[:, 0]]
+        B = self.rede.xnos[edges[:, 1]]
         AB = B - A
         AB_len_sq = np.sum(AB**2, axis=1)
         
@@ -376,8 +371,8 @@ class HidraulicoTermico:
                 contorno = ax.contourf(X_plot, Y_plot, T_grid, 50, cmap='jet')
                 ax.contour(X_plot, Y_plot, T_grid, 20, colors='k', linewidths=0.2)
                 
-                coord = sistema.rede.posicoes_nos
-                edges = sistema.rede.conectividade
+                coord = sistema.rede.xnos
+                edges = sistema.rede.conec
                 
                 # Plot das arestas com setas no meio
                 for (n1, n2) in edges:
@@ -505,7 +500,7 @@ def ex_4_acoplamento():
                 'Malha': f'{Nx}x{Ny}',
                 'Método': metodo,
                 'Subdivisões': n_sub,
-                'P_max (Pa)': sistema.rede.pressao.max(),
+                'P_max (Pa)': sistema.rede.p.max(),
                 'Potência (mW)': sistema.rede.calcular_potencia()/1000,
                 'Tempo_Medio (s)': np.mean(tempos)
             })
@@ -568,11 +563,11 @@ def ex_5_acoplamento():
     sistema = HidraulicoTermico.instantiate_subsystems(241, 121) 
     
     sistema.atualizar_condutancias_ex4(metodo='trapezio', n_sub=100)
-    P4 = sistema.rede.pressao.max()
+    P4 = sistema.rede.p.max()
     Pot4 = sistema.rede.calcular_potencia()
     
     viscosidades_efetivas = sistema.atualizar_condutancias_ex5(metodo='trapezio', n_sub=100)
-    P5 = sistema.rede.pressao.max()
+    P5 = sistema.rede.p.max()
     Pot5 = sistema.rede.calcular_potencia()
     
     diff_P = abs(P5 - P4) / P4 * 100
@@ -598,8 +593,8 @@ def ex_2_extra():
     d_max = 0.001  
     
     sim_base = HidraulicoTermico.instantiate_subsystems(Nx, Ny)
-    coord = sim_base.rede.posicoes_nos
-    edges = sim_base.rede.conectividade
+    coord = sim_base.rede.xnos
+    edges = sim_base.rede.conec
     
     S0_valores = [1e5, -1e5, 5e5, -5e5, 1e6, -1e6]
     distribuicoes = ['homogenea', 'espinha']
@@ -691,7 +686,7 @@ def ex_2_extra():
 
 def ex_1_especial_acoplamento():
     print("\n--- INICIANDO ROTINA ESPECIAL: MAPA DE PROXIMIDADE E CONDUTIVIDADE ---")
-    sistema_gatilho = HidraulicoTermico(61, 31)
+    sistema_gatilho = HidraulicoTermico.instantiate_subsystems(61, 31)
     print("Iniciando varredura de malhas e cálculo de distâncias (isso pode demorar devido aos laços não-vetorizados)...")
     df_resultados = sistema_gatilho.exercicio_1_2()
     print("\n=======================================================")
@@ -700,5 +695,9 @@ def ex_1_especial_acoplamento():
     print(df_resultados.to_string(index=False))
 
 if __name__ == "__main__":
-    sistema_teste = HidraulicoTermico.instantiate_subsystems(61, 31)
-    sistema_teste.exercicio_1_2()
+    ex_2_acoplamento()
+    # ex_3_acoplamento()
+    # ex_4_acoplamento()
+    # ex_5_acoplamento()
+    # ex_1_especial_acoplamento()
+    # ex_2_extra()

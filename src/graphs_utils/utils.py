@@ -44,7 +44,7 @@ def plotar_grafo_alternativo(grafo: RedeHidraulica) -> None:
     
     net.barnes_hut(gravity=-8000, central_gravity=0.3, spring_length=150, spring_strength=0.05, damping=0.09)
 
-    p = grafo.pressao
+    p = grafo.p
     norm = mcolors.Normalize(vmin=float(p.min()), vmax=float(p.max()))
     cmap = cm.get_cmap("coolwarm")
     
@@ -55,8 +55,8 @@ def plotar_grafo_alternativo(grafo: RedeHidraulica) -> None:
         node_label = f"Nó {i+1}\np={p[i]:.2f}"
         net.add_node(i, label=node_label, color=hex_color, title=f"Pressão exata: {p[i]:.4f}")
 
-    for idx, (u, v) in enumerate(grafo.conectividade):
-        flow = grafo.vazao[idx]
+    for idx, (u, v) in enumerate(grafo.conec):
+        flow = grafo.b[idx]
         
         if p[u] > p[v]:
             source, target = u, v
@@ -95,35 +95,31 @@ def plotar_grafo_alternativo(grafo: RedeHidraulica) -> None:
     }
     """)
 
-def gera_rede(levels:int=3):
-    # Constantes relevantes
-    A_k = 2.5e-7
-    mu = 1e-3
-    D_k = math.sqrt(4*A_k/math.pi)
-    kappa_k = math.pi * D_k**4 / (128 * mu)
+# def gera_rede(levels:int=3):
+#     A_k = 2.5e-7
+#     mu = 1e-3
+#     D_k = math.sqrt(4*A_k/math.pi)
+#     kappa_k = math.pi * D_k**4 / (128 * mu)
         
-    # Função providenciada de gerar grafos
-    coordenadas, conectividade = gera_grafo(levels)
+#     coordenadas, conectividade = gera_grafo(levels)
 
-    # Conversão de milimetros a metros
-    coordenadas *= 1e-3
+#     coordenadas *= 1e-3
 
-    numero_nos = len(coordenadas)
-    condutancias = []
+#     numero_nos = len(coordenadas)
+#     condutancias = []
 
-    for conexao in conectividade:
-        # Cálculo do comprimento do cano
-        no_1 = coordenadas[conexao[0]]
-        no_2 = coordenadas[conexao[1]]
+#     for conexao in conectividade:
+#         no_1 = coordenadas[conexao[0]]
+#         no_2 = coordenadas[conexao[1]]
 
-        L_k = math.sqrt((no_1[0]-no_2[0])**2+(no_1[1]-no_2[1])**2)
+#         L_k = math.sqrt((no_1[0]-no_2[0])**2+(no_1[1]-no_2[1])**2)
 
-        condutancia = kappa_k / L_k
+#         condutancia = kappa_k / L_k
 
-        condutancias.append(condutancia)
+#         condutancias.append(condutancia)
 
-    condutancias = np.array(condutancias)
+#     condutancias = np.array(condutancias)
 
-    rede = RedeHidraulica(numero_nos, conectividade + 1, condutancias, coordenadas)
+#     rede = RedeHidraulica(numero_nos, conectividade + 1, condutancias, coordenadas)
 
-    return rede
+#     return rede
